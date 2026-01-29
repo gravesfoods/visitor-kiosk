@@ -12,56 +12,39 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install sshpass
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-      - name: Validate required folders + lockfiles + deploy files exist in repo checkout
+      - name: Validate required folders + lockfiles exist in repo checkout
         run: |
           set -e
-          echo "Workspace: $(pwd)"
-          ls -la
-
-          echo "Checking FE..."
           test -f fe/package.json
           test -f fe/package-lock.json
-
-          echo "Checking BE..."
           test -f be/package.json
           test -f be/package-lock.json
-
-          echo "Checking deploy files..."
-          test -f visitorkiosk.conf
           test -f visitorkiosk-be.service
           test -f visitorkiosk-fe.service
+          echo "OK: repo has be/, fe/, lockfiles, and service files."
 
-          echo "OK: be/ + fe/ + deploy files are present."
-
-      - name: Copy BE + FE to Linode (safe per-folder sync)
+      - name: Copy BE + FE to Linode
         run: |
-          # Ensure target dirs exist
           sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no root@172.232.20.177 \
             "mkdir -p /root/VisitorKiosk/be /root/VisitorKiosk/fe"
 
-          # Sync backend
           rsync -avz --delete \
             --exclude '.git' \
             --exclude 'node_modules' \
             --exclude '.env' \
             ./be/ root@172.232.20.177:/root/VisitorKiosk/be/
 
-          # Sync frontend
           rsync -avz --delete \
             --exclude '.git' \
             --exclude 'node_modules' \
             --exclude '.env' \
             ./fe/ root@172.232.20.177:/root/VisitorKiosk/fe/
 
-          # Sync deploy files (no --delete)
           rsync -avz \
-            ./visitorkiosk.conf \
             ./visitorkiosk-be.service \
             ./visitorkiosk-fe.service \
             root@172.232.20.177:/root/VisitorKiosk/
@@ -78,7 +61,6 @@ jobs:
             set -e
             export DEBIAN_FRONTEND=noninteractive
 
-            # Ensure base packages exist
             apt update -qq
             apt install -y -qq nginx
 
@@ -96,7 +78,6 @@ jobs:
             # Backend
             # -------------------------
             cd /root/VisitorKiosk/be
-            ls -la package.json package-lock.json
             npm ci
             npm run build
 
@@ -112,7 +93,6 @@ jobs:
             # Frontend
             # -------------------------
             cd /root/VisitorKiosk/fe
-            ls -la package.json package-lock.json
             npm ci
             npm run build
 
@@ -122,8 +102,14 @@ jobs:
             chown -R www-data:www-data /var/www/visitorkiosk
 
             # -------------------------
-            # Nginx
+            # Nginx (use existing server conf)
             # -------------------------
+            if [ ! -f /root/VisitorKiosk/visitorkiosk.conf ]; then
+              echo "ERROR: /root/VisitorKiosk/visitorkiosk.conf not found on server."
+              echo "Put the file there or commit it to the repo and rsync it."
+              exit 1
+            fi
+
             rm -f /etc/nginx/sites-available/visitorkiosk.conf
             rm -f /etc/nginx/sites-enabled/visitorkiosk.conf
             cp /root/VisitorKiosk/visitorkiosk.conf /etc/nginx/sites-available/visitorkiosk.conf
