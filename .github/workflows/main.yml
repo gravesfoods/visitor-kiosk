@@ -19,39 +19,44 @@ jobs:
       - name: Install sshpass
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-      - name: Verify repo contents (runner)
+      # Fail fast so we don't rsync --delete and accidentally remove server folders
+      - name: Validate required folders + lockfiles exist in repo checkout
         run: |
           set -e
           echo "Workspace: $(pwd)"
-          echo "Top-level:"
           ls -la
 
-          echo "Frontend:"
-          ls -la fe || true
-          ls -la fe/package.json fe/package-lock.json
+          echo "Checking FE..."
+          test -f fe/package.json
+          test -f fe/package-lock.json
 
-          echo "Backend (optional):"
-          if [ -d "be" ]; then
-            ls -la be
-            ls -la be/package.json be/package-lock.json
-          else
-            echo "NOTE: 'be/' folder is NOT present in this repo checkout."
-          fi
+          echo "Checking BE..."
+          test -f be/package.json
+          test -f be/package-lock.json
 
-      # Copy ONLY frontend + deploy configs so we don't accidentally delete /root/VisitorKiosk/be on the server
-      - name: Copy FE + deploy files to Linode
+          echo "OK: be/ and fe/ exist and have package-lock.json"
+
+      - name: Copy BE + FE to Linode (safe per-folder sync)
         run: |
-          # Ensure target folders exist
-          sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no root@172.232.20.177 "mkdir -p /root/VisitorKiosk/fe"
+          # Ensure target dirs exist
+          sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no root@172.232.20.177 \
+            "mkdir -p /root/VisitorKiosk/be /root/VisitorKiosk/fe"
 
-          # Sync frontend only (safe to --delete within fe)
+          # Sync backend only
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            ./be/ root@172.232.20.177:/root/VisitorKiosk/be/
+
+          # Sync frontend only
           rsync -avz --delete \
             --exclude '.git' \
             --exclude 'node_modules' \
             --exclude '.env' \
             ./fe/ root@172.232.20.177:/root/VisitorKiosk/fe/
-          
-          # Sync deploy/config files (no --delete)
+
+          # Sync deploy files (no --delete)
           rsync -avz \
             ./visitorkiosk.conf \
             ./visitorkiosk-be.service \
@@ -74,7 +79,7 @@ jobs:
             apt update -qq
             apt install -y -qq nginx
 
-            # Ensure node/npm exist (skip if already installed)
+            # Ensure node/npm exist
             if ! command -v npm >/dev/null 2>&1; then
               apt install -y -qq ca-certificates curl gnupg
               curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -85,40 +90,27 @@ jobs:
             npm -v
 
             # -------------------------
-            # Backend (ONLY if present on server)
+            # Backend
             # -------------------------
-            if [ -f /root/VisitorKiosk/be/package.json ]; then
-              cd /root/VisitorKiosk/be
-              echo "BE PWD=$(pwd)"
-              ls -la package.json || true
+            cd /root/VisitorKiosk/be
+            ls -la package.json package-lock.json
+            npm ci
+            npm run build
 
-              if [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
-                echo "ERROR: Backend exists but no package-lock.json in /root/VisitorKiosk/be. Cannot run npm ci."
-                exit 1
-              fi
+            # Install/Update systemd service
+            rm -f /etc/systemd/system/visitorkiosk-be.service
+            cp /root/VisitorKiosk/visitorkiosk-be.service /etc/systemd/system/visitorkiosk-be.service
+            chmod 644 /etc/systemd/system/visitorkiosk-be.service
 
-              npm ci
-              npm run build
-
-              # Install/Update systemd service
-              rm -f /etc/systemd/system/visitorkiosk-be.service
-              cp /root/VisitorKiosk/visitorkiosk-be.service /etc/systemd/system/visitorkiosk-be.service
-              chmod 644 /etc/systemd/system/visitorkiosk-be.service
-
-              systemctl daemon-reload
-              systemctl enable visitorkiosk-be.service
-              systemctl restart visitorkiosk-be.service
-            else
-              echo "NOTE: Backend not found at /root/VisitorKiosk/be. Skipping backend build/restart."
-            fi
+            systemctl daemon-reload
+            systemctl enable visitorkiosk-be.service
+            systemctl restart visitorkiosk-be.service
 
             # -------------------------
             # Frontend
             # -------------------------
             cd /root/VisitorKiosk/fe
-            echo "FE PWD=$(pwd)"
             ls -la package.json package-lock.json
-
             npm ci
             npm run build
 
@@ -139,5 +131,4 @@ jobs:
             nginx -t
             systemctl reload nginx
 
-            # Show BE status if it exists
-            systemctl status visitorkiosk-be.service -l --no-pager || true
+            systemctl status visitorkiosk-be.service -l --no-pager
