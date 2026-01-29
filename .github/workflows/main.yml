@@ -96,17 +96,26 @@ jobs:
             npm ci
             npm run build
 
+            # (Optional) Keep this if you also serve static somewhere. Harmless otherwise.
             rm -rf /var/www/visitorkiosk
             mkdir -p /var/www/visitorkiosk
             cp -r /root/VisitorKiosk/fe/dist/* /var/www/visitorkiosk/
             chown -R www-data:www-data /var/www/visitorkiosk
+
+            # Install/Update FE systemd service + restart
+            rm -f /etc/systemd/system/visitorkiosk-fe.service
+            cp /root/VisitorKiosk/visitorkiosk-fe.service /etc/systemd/system/visitorkiosk-fe.service
+            chmod 644 /etc/systemd/system/visitorkiosk-fe.service
+
+            systemctl daemon-reload
+            systemctl enable visitorkiosk-fe.service
+            systemctl restart visitorkiosk-fe.service
 
             # -------------------------
             # Nginx (use existing server conf)
             # -------------------------
             if [ ! -f /root/VisitorKiosk/visitorkiosk.conf ]; then
               echo "ERROR: /root/VisitorKiosk/visitorkiosk.conf not found on server."
-              echo "Put the file there or commit it to the repo and rsync it."
               exit 1
             fi
 
@@ -119,3 +128,4 @@ jobs:
             systemctl reload nginx
 
             systemctl status visitorkiosk-be.service -l --no-pager
+            systemctl status visitorkiosk-fe.service -l --no-pager
