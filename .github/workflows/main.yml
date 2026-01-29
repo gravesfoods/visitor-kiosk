@@ -10,76 +10,112 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Install sshpass
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Install sshpass
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-    - name: Copy repo to Linode
-      run: |
-        rsync -avz --delete \
-          --exclude '.git' \
-          --exclude 'be/node_modules' \
-          --exclude 'fe/node_modules' \
-          --exclude 'be/.env' \
-          --exclude 'fe/.env' \
-          ./ root@172.232.20.177:/root/VisitorKiosk/
-      env:
-        RSYNC_RSH: 'sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no'
-
-    - name: Build and restart on Linode
-      uses: appleboy/ssh-action@master
-      with:
-        host: "172.232.20.177"
-        username: "root"
-        password: "jS21goUi0267"
-        script: |
+      # Prove the lockfiles exist in the GitHub checkout (CI can only see what is committed)
+      - name: Verify lockfiles exist in repo checkout
+        run: |
           set -e
-          export DEBIAN_FRONTEND=noninteractive
+          echo "Workspace: $(pwd)"
+          ls -la be/package.json fe/package.json
+          ls -la be/package-lock.json fe/package-lock.json
+          echo "Tracked by git (must not be empty):"
+          git ls-files be/package-lock.json fe/package-lock.json
+          echo "Done."
 
-          # Ensure base packages exist
-          apt update -qq
-          apt install -y -qq nginx
+      - name: Copy repo to Linode
+        run: |
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude 'be/node_modules' \
+            --exclude 'fe/node_modules' \
+            --exclude 'be/.env' \
+            --exclude 'fe/.env' \
+            ./ root@172.232.20.177:/root/VisitorKiosk/
+        env:
+          RSYNC_RSH: 'sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no'
 
-          # -------------------------
-          # Backend
-          # -------------------------
-          cd /root/VisitorKiosk/be
-          npm ci
-          npm run build
+      # Prove the lockfiles made it to the server after rsync
+      - name: Verify lockfiles exist on Linode after rsync
+        run: |
+          sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no root@172.232.20.177 '
+            set -e
+            ls -la /root/VisitorKiosk/be/package-lock.json /root/VisitorKiosk/fe/package-lock.json
+          '
 
-          # Install/Update systemd service
-          rm -f /etc/systemd/system/visitorkiosk-be.service
-          cp /root/VisitorKiosk/visitorkiosk-be.service /etc/systemd/system/visitorkiosk-be.service
-          chmod 644 /etc/systemd/system/visitorkiosk-be.service
+      - name: Build and restart on Linode
+        uses: appleboy/ssh-action@master
+        with:
+          host: "172.232.20.177"
+          username: "root"
+          password: "jS21goUi0267"
+          script: |
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
 
-          systemctl daemon-reload
-          systemctl enable visitorkiosk-be.service
-          systemctl restart visitorkiosk-be.service
+            # Ensure base packages exist
+            apt update -qq
+            apt install -y -qq nginx
 
-          # -------------------------
-          # Frontend
-          # -------------------------
-          cd /root/VisitorKiosk/fe
-          npm ci
-          npm run build
+            # -------------------------
+            # Backend
+            # -------------------------
+            cd /root/VisitorKiosk/be
+            echo "BE PWD=$(pwd)"
+            ls -la package.json package-lock.json
 
-          # Copy FE build to nginx-readable directory
-          rm -rf /var/www/visitorkiosk
-          mkdir -p /var/www/visitorkiosk
-          cp -r /root/VisitorKiosk/fe/dist/* /var/www/visitorkiosk/
-          chown -R www-data:www-data /var/www/visitorkiosk
+            # Use npm ci only if lockfile exists, otherwise fail with a clear message
+            if [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
+              echo "ERROR: No package-lock.json found in /root/VisitorKiosk/be. npm ci cannot run."
+              exit 1
+            fi
 
-          # -------------------------
-          # Nginx
-          # -------------------------
-          rm -f /etc/nginx/sites-available/visitorkiosk.conf
-          rm -f /etc/nginx/sites-enabled/visitorkiosk.conf
-          cp /root/VisitorKiosk/visitorkiosk.conf /etc/nginx/sites-available/visitorkiosk.conf
-          ln -s /etc/nginx/sites-available/visitorkiosk.conf /etc/nginx/sites-enabled/visitorkiosk.conf
+            npm ci
+            npm run build
 
-          nginx -t
-          systemctl reload nginx
+            # Install/Update systemd service
+            rm -f /etc/systemd/system/visitorkiosk-be.service
+            cp /root/VisitorKiosk/visitorkiosk-be.service /etc/systemd/system/visitorkiosk-be.service
+            chmod 644 /etc/systemd/system/visitorkiosk-be.service
 
-          systemctl status visitorkiosk-be.service -l --no-pager
+            systemctl daemon-reload
+            systemctl enable visitorkiosk-be.service
+            systemctl restart visitorkiosk-be.service
+
+            # -------------------------
+            # Frontend
+            # -------------------------
+            cd /root/VisitorKiosk/fe
+            echo "FE PWD=$(pwd)"
+            ls -la package.json package-lock.json
+
+            if [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
+              echo "ERROR: No package-lock.json found in /root/VisitorKiosk/fe. npm ci cannot run."
+              exit 1
+            fi
+
+            npm ci
+            npm run build
+
+            # Copy FE build to nginx-readable directory
+            rm -rf /var/www/visitorkiosk
+            mkdir -p /var/www/visitorkiosk
+            cp -r /root/VisitorKiosk/fe/dist/* /var/www/visitorkiosk/
+            chown -R www-data:www-data /var/www/visitorkiosk
+
+            # -------------------------
+            # Nginx
+            # -------------------------
+            rm -f /etc/nginx/sites-available/visitorkiosk.conf
+            rm -f /etc/nginx/sites-enabled/visitorkiosk.conf
+            cp /root/VisitorKiosk/visitorkiosk.conf /etc/nginx/sites-available/visitorkiosk.conf
+            ln -s /etc/nginx/sites-available/visitorkiosk.conf /etc/nginx/sites-enabled/visitorkiosk.conf
+
+            nginx -t
+            systemctl reload nginx
+
+            systemctl status visitorkiosk-be.service -l --no-pager
