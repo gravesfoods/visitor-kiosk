@@ -10,17 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code (include submodules if any)
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - name: Install sshpass
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-      # Fail fast so we don't rsync --delete and accidentally remove server folders
-      - name: Validate required folders + lockfiles exist in repo checkout
+      - name: Validate required folders + lockfiles + deploy files exist in repo checkout
         run: |
           set -e
           echo "Workspace: $(pwd)"
@@ -34,7 +32,12 @@ jobs:
           test -f be/package.json
           test -f be/package-lock.json
 
-          echo "OK: be/ and fe/ exist and have package-lock.json"
+          echo "Checking deploy files..."
+          test -f visitorkiosk.conf
+          test -f visitorkiosk-be.service
+          test -f visitorkiosk-fe.service
+
+          echo "OK: be/ + fe/ + deploy files are present."
 
       - name: Copy BE + FE to Linode (safe per-folder sync)
         run: |
@@ -42,14 +45,14 @@ jobs:
           sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no root@172.232.20.177 \
             "mkdir -p /root/VisitorKiosk/be /root/VisitorKiosk/fe"
 
-          # Sync backend only
+          # Sync backend
           rsync -avz --delete \
             --exclude '.git' \
             --exclude 'node_modules' \
             --exclude '.env' \
             ./be/ root@172.232.20.177:/root/VisitorKiosk/be/
 
-          # Sync frontend only
+          # Sync frontend
           rsync -avz --delete \
             --exclude '.git' \
             --exclude 'node_modules' \
@@ -97,7 +100,6 @@ jobs:
             npm ci
             npm run build
 
-            # Install/Update systemd service
             rm -f /etc/systemd/system/visitorkiosk-be.service
             cp /root/VisitorKiosk/visitorkiosk-be.service /etc/systemd/system/visitorkiosk-be.service
             chmod 644 /etc/systemd/system/visitorkiosk-be.service
@@ -114,7 +116,6 @@ jobs:
             npm ci
             npm run build
 
-            # Copy FE build to nginx-readable directory
             rm -rf /var/www/visitorkiosk
             mkdir -p /var/www/visitorkiosk
             cp -r /root/VisitorKiosk/fe/dist/* /var/www/visitorkiosk/
