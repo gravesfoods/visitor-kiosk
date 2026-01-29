@@ -1,0 +1,85 @@
+name: Deploy Visitor Kiosk to Linode
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Install sshpass
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+    - name: Copy repo to Linode
+      run: |
+        rsync -avz --delete \
+          --exclude '.git' \
+          --exclude 'be/node_modules' \
+          --exclude 'fe/node_modules' \
+          --exclude 'be/.env' \
+          --exclude 'fe/.env' \
+          ./ root@172.232.20.177:/root/VisitorKiosk/
+      env:
+        RSYNC_RSH: 'sshpass -p "jS21goUi0267" ssh -o StrictHostKeyChecking=no'
+
+    - name: Build and restart on Linode
+      uses: appleboy/ssh-action@master
+      with:
+        host: "172.232.20.177"
+        username: "root"
+        password: "jS21goUi0267"
+        script: |
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Ensure base packages exist
+          apt update -qq
+          apt install -y -qq nginx
+
+          # -------------------------
+          # Backend
+          # -------------------------
+          cd /root/VisitorKiosk/be
+          npm ci
+          npm run build
+
+          # Install/Update systemd service
+          rm -f /etc/systemd/system/visitorkiosk-be.service
+          cp /root/VisitorKiosk/visitorkiosk-be.service /etc/systemd/system/visitorkiosk-be.service
+          chmod 644 /etc/systemd/system/visitorkiosk-be.service
+
+          systemctl daemon-reload
+          systemctl enable visitorkiosk-be.service
+          systemctl restart visitorkiosk-be.service
+
+          # -------------------------
+          # Frontend
+          # -------------------------
+          cd /root/VisitorKiosk/fe
+          npm ci
+          npm run build
+
+          # Copy FE build to nginx-readable directory
+          rm -rf /var/www/visitorkiosk
+          mkdir -p /var/www/visitorkiosk
+          cp -r /root/VisitorKiosk/fe/dist/* /var/www/visitorkiosk/
+          chown -R www-data:www-data /var/www/visitorkiosk
+
+          # -------------------------
+          # Nginx
+          # -------------------------
+          rm -f /etc/nginx/sites-available/visitorkiosk.conf
+          rm -f /etc/nginx/sites-enabled/visitorkiosk.conf
+          cp /root/VisitorKiosk/visitorkiosk.conf /etc/nginx/sites-available/visitorkiosk.conf
+          ln -s /etc/nginx/sites-available/visitorkiosk.conf /etc/nginx/sites-enabled/visitorkiosk.conf
+
+          nginx -t
+          systemctl reload nginx
+
+          systemctl status visitorkiosk-be.service -l --no-pager

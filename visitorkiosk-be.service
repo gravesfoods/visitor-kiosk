@@ -1,0 +1,15 @@
+[Unit]
+Description=Visitor Kiosk Backend (NestJS)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/VisitorKiosk/be
+EnvironmentFile=/root/VisitorKiosk/be/.env
+ExecStart=/usr/bin/node /root/VisitorKiosk/be/dist/main.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
