@@ -1,3 +1,5 @@
+// be/src/kiosk/dto/print-badge.dto.ts
+
 import { IsOptional, IsString } from 'class-validator';
 
 export class PrintBadgeDto {

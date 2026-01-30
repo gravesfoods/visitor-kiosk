@@ -1,3 +1,5 @@
+// be/src/common/guards/kiosk-key.guard.ts
+
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 

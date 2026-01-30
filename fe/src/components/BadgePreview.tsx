@@ -67,13 +67,21 @@ export const BadgePreview = ({ visitorData, photo, hostEmail, onComplete }: Badg
 
     try {
       const res = await printBadge(payload);
-      setBadgeCode(res.badge_code);
-      setPrintStatus("success");
-      toast.success("Badge printed successfully!");
+
+      // Always set badge code if returned (lets the UI show QR for manual assistance)
+      if (res?.badge_code) setBadgeCode(res.badge_code);
+
+      if (res?.success) {
+        setPrintStatus("success");
+        toast.success(res.message || "Badge printed successfully!");
+      } else {
+        setPrintStatus("error");
+        toast.error(res.message || "Unable to print badge. Please notify the front desk.");
+      }
     } catch (e: any) {
       console.error(e);
       setPrintStatus("error");
-      toast.error("Unable to print badge. Please notify the front desk.");
+      toast.error(e?.message || "Unable to print badge. Please notify the front desk.");
     }
   };
 
@@ -100,7 +108,6 @@ export const BadgePreview = ({ visitorData, photo, hostEmail, onComplete }: Badg
             <div className="flex-shrink-0 space-y-4">
               <img src={photo} alt="Visitor" className="w-48 h-48 object-cover rounded-xl border-2 border-border" />
 
-              {/* QR for checkout */}
               <div className="bg-white rounded-xl p-3 border">
                 {badgeCode ? (
                   <QRCodeCanvas value={badgeCode} size={160} includeMargin />
@@ -173,7 +180,9 @@ export const BadgePreview = ({ visitorData, photo, hostEmail, onComplete }: Badg
               <AlertCircle className="w-7 h-7" />
               <span className="font-semibold">We couldn't print your badge. Please notify the front desk.</span>
             </div>
-            <p className="text-lg text-muted-foreground">Your badge information is displayed above for manual assistance.</p>
+            <p className="text-lg text-muted-foreground">
+              Your badge info (including QR/code) is displayed above for manual assistance.
+            </p>
             <Button onClick={onComplete} size="lg" className="h-20 px-16 text-2xl font-semibold mt-8">
               Complete Check-In
             </Button>

@@ -1,4 +1,4 @@
-// src/components/CameraCapture.tsx
+// fe/src/components/CameraCapture.tsx
 
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
